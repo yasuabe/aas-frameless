@@ -1,6 +1,7 @@
 import cats.effect.Sync
+import frameless.TypedDataset
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Dataset, SparkSession}
 
 package object frameless_aas {
   trait UsesSparkSession[F[_]] {
@@ -25,4 +26,8 @@ package object frameless_aas {
     def useSpark(use: SparkSession => F[Unit]): F[Unit] =
       S.bracket(acquire)(use)(release)
   }
+
+  def cache[F[_]: Sync, T](t: TypedDataset[T]): F[TypedDataset[T]] = Sync[F].delay(t.cache())
+  def unpersist[F[_]: Sync, T](t: TypedDataset[T]): F[TypedDataset[T]] = Sync[F].delay(t.unpersist())
+  def unpersistF[F[_]: Sync, T](ds: Dataset[T]): F[Dataset[T]] = Sync[F].delay(ds.unpersist())
 }

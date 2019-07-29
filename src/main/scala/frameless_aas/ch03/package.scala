@@ -9,7 +9,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import frameless.syntax._
 import frameless.{TypedDataset, TypedEncoder}
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession}
 
 import scala.reflect.runtime.universe.TypeTag
 
@@ -63,4 +63,18 @@ package object ch03 {
       _        <- f(playData, artists, aliases)
     } yield ()
   }
+  def canonicalize(
+    playData: TypedDataset[UserArtistData],
+    aliases:  TypedDataset[ArtistAlias]
+  ): TypedDataset[UserArtistData] = {
+    val joined = playData.joinLeft(aliases)(playData('artistId) === aliases('badId))
+    val extractGoodId = joined.makeUDF((_: Option[ArtistAlias]).map(_.goodId))
+    joined.select (
+      joined.colMany('_1, 'userId),
+      extractGoodId(joined('_2)).getOrElse(joined.colMany('_1, 'artistId)),
+      joined.colMany('_1, 'playCount)
+    ).as[UserArtistData]
+  }
+  def conv[T, U: TypedEncoder](f: DataFrame => DataFrame): TypedDataset[T] => TypedDataset[U] =
+    in => f(in.toDF).unsafeTyped[U]
 }

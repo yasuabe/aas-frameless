@@ -62,18 +62,6 @@ trait ModelDemo[F[_]] {
       .setPredictionCol("prediction")
       .fit(ds.dataset)
   }
-  def canonicalize(
-    playData: TypedDataset[UserArtistData],
-    aliases:  TypedDataset[ArtistAlias]
-  ): TypedDataset[UserArtistData] = {
-    val joined = playData.joinLeft(aliases)(playData('artistId) === aliases('badId))
-    val extractGoodId = joined.makeUDF((_: Option[ArtistAlias]).map(_.goodId))
-    joined.select (
-      joined.colMany('_1, 'userId),
-      extractGoodId(joined('_2)).getOrElse(joined.colMany('_1, 'artistId)),
-      joined.colMany('_1, 'playCount)
-    ).as[UserArtistData]
-  }
   def recommend(model: ALSModel, userID: Int, howMany: Int): F[TypedDataset[ArtistPrediction]] = {
     F.ask map { spark =>
       import spark.implicits._
