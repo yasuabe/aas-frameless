@@ -1,7 +1,12 @@
 import cats.effect.Sync
-import frameless.TypedDataset
+import frameless.{TypedDataset, TypedEncoder}
+import frameless.syntax._
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.{Dataset, Encoder, SparkSession}
+import cats.syntax.flatMap._
+
+import scala.collection.mutable.ArrayBuffer
+import scala.util.Random
 
 package object frameless_aas {
   trait UsesSparkSession[F[_]] {
@@ -30,4 +35,24 @@ package object frameless_aas {
   def cache[F[_]: Sync, T](t: TypedDataset[T]): F[TypedDataset[T]] = Sync[F].delay(t.cache())
   def unpersist[F[_]: Sync, T](t: TypedDataset[T]): F[TypedDataset[T]] = Sync[F].delay(t.unpersist())
   def unpersistF[F[_]: Sync, T](ds: Dataset[T]): F[Dataset[T]] = Sync[F].delay(ds.unpersist())
+
+  def groupAndFlatMap[I, K: Encoder, O: Encoder: TypedEncoder](
+    t: TypedDataset[I])(
+    k: I => K)(
+    f: (K, Iterator[I]) =>  TraversableOnce[O])
+  : TypedDataset[O] = t.dataset.groupByKey(k).flatMapGroups(f).as[O].typed
+
+  def chooseAtRandom[T](n: Int, source: Seq[T], excludes: Set[T]): TraversableOnce[T] = {
+    val random = new Random()
+    val result = new ArrayBuffer[T]()
+    var i = 0
+    while (i < source.length && result.size < n) {
+      val elem = source(random.nextInt(source.length))
+      if (!excludes.contains(elem)) result += elem
+      i += 1
+    }
+    result
+  }
+  def cacheUnpersist[F[_], T, O](a: TypedDataset[T])(f: TypedDataset[T] => F[O])(implicit S: Sync[F]): F[O] =
+    S.bracket(cache(a))(f)(x => unpersist(x) >> S.unit)
 }
