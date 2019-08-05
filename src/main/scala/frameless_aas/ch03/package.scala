@@ -62,6 +62,7 @@ package object ch03 {
     }
     F.ask.map(spark => read(spark).typed)
   }
+  // TODO: 独立したファイルに
   trait Ch03Base {
     type Func[F[_]] = (TypedDataset[UserArtistData], TypedDataset[ArtistData], TypedDataset[ArtistAlias]) => F[Unit]
     val path = "files/profiledata_06-May-2005"
@@ -72,6 +73,7 @@ package object ch03 {
       _        <- f(playData, artists, aliases)
     } yield ()
   }
+  // TODO: まず Alias 自体を正規化しておくべき. unknown artist も除外すべき.
   def canonicalize(
     playData: TypedDataset[UserArtistData],
     aliases:  TypedDataset[ArtistAlias]
