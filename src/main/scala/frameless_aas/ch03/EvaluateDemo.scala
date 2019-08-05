@@ -60,19 +60,6 @@ trait EvaluateDemo[F[_]] {
   } (aucFunc(_).map((_, (rank, regParam, alpha)))) { model =>
     unpersistF(model.userFactors) >> unpersistF(model.itemFactors) >> S.unit
   }
-  def buildALSModel(rank: Int, regParam: Double, alpha: Double, ds: TypedDataset[_]): ALSModel =
-    new ALS()
-       .setSeed(Random.nextLong())
-       .setImplicitPrefs(true)
-       .setRank(rank)
-       .setRegParam(regParam)
-       .setAlpha(alpha)
-       .setMaxIter(20)
-       .setUserCol("userId")
-       .setItemCol("artistId")
-       .setRatingCol("playCount")
-       .setPredictionCol("prediction")
-       .fit(ds.dataset)
 
   import frameless.functions.aggregate._
 

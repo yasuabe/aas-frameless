@@ -54,5 +54,10 @@ package object frameless_aas {
     result
   }
   def cacheUnpersist[F[_], T, O](a: TypedDataset[T])(f: TypedDataset[T] => F[O])(implicit S: Sync[F]): F[O] =
-    S.bracket(cache(a))(f)(x => unpersist(x) >> S.unit)
+    S.bracket(cache(a))(f)(x => unpersist(x) >> S.unit) // TODO
+
+  implicit class BooleanOps(val b: Boolean) extends AnyVal {
+    def toOption[T](v: => T): Option[T] =
+      if (b) Some(v) else None
+  }
 }

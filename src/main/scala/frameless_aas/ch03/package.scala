@@ -1,5 +1,6 @@
 package frameless_aas
 
+import scala.util.Random
 import cats.Applicative
 import cats.data.ReaderT
 import cats.effect.{IO, Sync}
@@ -9,20 +10,28 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import frameless.syntax._
 import frameless.{TypedDataset, TypedEncoder}
+import org.apache.spark.ml.recommendation.{ALS, ALSModel}
 import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.functions.lit
 
 import scala.reflect.runtime.universe.TypeTag
 
 package object ch03 {
+  type UserId   = Int
+  type ArtistId = Int
+  type Count    = Int
+  type Prediction = Double
+
+  type Action[T] = ReaderT[IO, SparkSession, T]
+
   implicit class BoolToOption(val self: Boolean) extends AnyVal {
     def toOption[A](value: => A): Option[A] =
       if (self) Some(value) else None
   }
-
-  type Action[T] = ReaderT[IO, SparkSession, T]
   implicit val readerIOApplicativeAsk: ApplicativeAsk[Action, SparkSession] =
     askReader[IO, SparkSession]
 
+  // TODO: いまいち
   def resource[F[_], T, R](ds: TypedDataset[T])(f: TypedDataset[T] => R)(implicit S: Sync[F]): F[R] = {
     S.bracket(
       S.delay(ds.cache())
@@ -36,7 +45,7 @@ package object ch03 {
     fileName: String, f: String => T)(implicit F: ApplicativeAsk[F, SparkSession]
   ): F[TypedDataset[T]] = {
     def read(spark: SparkSession) = {
-      import spark.implicits.newProductEncoder
+      import spark.implicits._
       spark.read.textFile(fileName).map(f)
     }
     F.ask.map(read(_).typed)
@@ -77,4 +86,35 @@ package object ch03 {
   }
   def conv[T, U: TypedEncoder](f: DataFrame => DataFrame): TypedDataset[T] => TypedDataset[U] =
     in => f(in.toDF).unsafeTyped[U]
+
+  def buildALSModel(rank: Int, regParam: Double, alpha: Double, ds: TypedDataset[_]): ALSModel =
+    new ALS()
+      .setSeed(Random.nextLong())
+      .setImplicitPrefs(true)
+      .setRank(rank)
+      .setRegParam(regParam)
+      .setAlpha(alpha)
+      .setMaxIter(20)
+      .setUserCol("userId")
+      .setItemCol("artistId")
+      .setRatingCol("playCount")
+      .setPredictionCol("prediction")
+      .fit(ds.dataset)
+
+  def recommend[F[_]: Sync](
+    model: ALSModel, userID: Int, howMany: Int)(
+    implicit F: ApplicativeAsk[F, SparkSession])
+  : F[TypedDataset[ArtistPrediction]] =
+    F.ask map { spark: SparkSession =>
+      import spark.implicits._
+      val toRecommend = model.itemFactors.
+        select($"id".as("artistId")).
+        withColumn("userId", lit(userID))
+      model.transform(toRecommend)
+        .select("artistId", "prediction")
+        .orderBy($"prediction".desc)
+        .limit(howMany)
+        .as[ArtistPrediction]
+        .typed
+    }
 }

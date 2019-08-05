@@ -21,8 +21,8 @@ object ArtistData {
 case class ArtistAlias(badId: Int, goodId: Int)
 object ArtistAlias {
   def apply(line: String): Option[ArtistAlias] = line.span(_ != '\t') match {
-    case ("", _)         => None
-    case (alias, canonical) => ArtistAlias(alias.toInt, canonical.trim.toInt).some
+    case ("", _)     => None
+    case (bad, good) => (bad != good).toOption(ArtistAlias(bad.toInt, good.trim.toInt))
   }
 }
 

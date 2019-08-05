@@ -48,6 +48,7 @@ trait ModelDemo[F[_]] {
     .select(trainData('artistId))
     .as[Int]
 
+  // TODO:
   def buildALSModel(trainData: TypedDataset[UserArtistData]): F[ALSModel] = resource(trainData) { ds =>
     new ALS()
       .setSeed(Random.nextLong())
@@ -61,20 +62,6 @@ trait ModelDemo[F[_]] {
       .setRatingCol("playCount")
       .setPredictionCol("prediction")
       .fit(ds.dataset)
-  }
-  def recommend(model: ALSModel, userID: Int, howMany: Int): F[TypedDataset[ArtistPrediction]] = {
-    F.ask map { spark =>
-      import spark.implicits._
-      val toRecommend = model.itemFactors.
-        select($"id".as("artistId")).
-        withColumn("userId", lit(userID))
-      model.transform(toRecommend)
-        .select("artistId", "prediction")
-        .orderBy($"prediction".desc)
-        .limit(howMany)
-        .as[ArtistPrediction]
-        .typed
-    }
   }
 }
 object ModelDemoMain extends Ch03Base with IOApp with UsesSparkSession[IO] {
