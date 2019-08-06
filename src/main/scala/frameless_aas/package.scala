@@ -1,11 +1,15 @@
 import cats.effect.Sync
+import cats.mtl.ApplicativeAsk
 import frameless.{TypedDataset, TypedEncoder}
 import frameless.syntax._
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{Dataset, Encoder, SparkSession}
 import cats.syntax.flatMap._
+import cats.syntax.functor._
+import org.apache.spark.broadcast.Broadcast
 
 import scala.collection.mutable.ArrayBuffer
+import scala.reflect.ClassTag
 import scala.util.Random
 
 package object frameless_aas {
@@ -60,4 +64,6 @@ package object frameless_aas {
     def toOption[T](v: => T): Option[T] =
       if (b) Some(v) else None
   }
+  def broadcast[F[_]: Sync, T: ClassTag](value: T)(implicit F: ApplicativeAsk[F, SparkSession]): F[Broadcast[T]] =
+    F.ask.map(_.sparkContext.broadcast(value))
 }

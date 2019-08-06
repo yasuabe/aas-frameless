@@ -10,11 +10,9 @@ import frameless.TypedDataset
 import frameless.cats.implicits._
 import frameless_aas._
 import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.ml.recommendation.{ALS, ALSModel}
+import org.apache.spark.ml.recommendation.ALSModel
 import org.apache.spark.sql.SparkSession
-
-import scala.reflect.ClassTag
-import scala.util.Random
+import frameless.functions.aggregate._
 
 trait EvaluateDemo[F[_]] {
   implicit val F: ApplicativeAsk[F, SparkSession]
@@ -23,17 +21,15 @@ trait EvaluateDemo[F[_]] {
 
   private def print(s: Any) = S.delay(println(s))
 
-  def broadcast[T: ClassTag](value: T): F[Broadcast[T]] =
-    F.ask.map(_.sparkContext.broadcast(value))
-
   def evaluate(
     userArtists: TypedDataset[UserArtistData],
     artistData: TypedDataset[ArtistData],
     aliases: TypedDataset[ArtistAlias]
   ): F[Unit] = {
     for {
-      all              <- pure(canonicalize(userArtists, aliases))
-      bAllArtistIDs    <- all.select(all('artistId)).distinct.collect() >>= broadcast
+      bAliases      <- ArtistAlias.canonicalMap(aliases) >>= broadcast[F, Map[Int, Int]]
+      all           =  canonicalize(userArtists, bAliases)
+      bAllArtistIDs <- all.select(all('artistId)).distinct.collect() >>= broadcast[F, Seq[Int]]
 
       Array(train, cv) =  all.randomSplit(Array(0.9, 0.1))
       _                <- cache(train) >> cache(cv)
@@ -41,7 +37,7 @@ trait EvaluateDemo[F[_]] {
       mostListenedAUC  <- areaUnderCurve(cv, bAllArtistIDs, predictMostListened(train))
       _                <- print(mostListenedAUC)
 
-      f         =  (m: ALSModel) => areaUnderCurve(cv, bAllArtistIDs, conv(m.transform))
+      f         =  (m: ALSModel) => areaUnderCurve(cv, bAllArtistIDs, liftTyped(m.transform))
       evaluated <- tryCombinations(train)(f).sequence
       _         <- evaluated.sorted.reverse.map(print).sequence
       _         <- unpersist(train) >> unpersist(cv)
@@ -60,13 +56,6 @@ trait EvaluateDemo[F[_]] {
   } (aucFunc(_).map((_, (rank, regParam, alpha)))) { model =>
     unpersistF(model.userFactors) >> unpersistF(model.itemFactors) >> S.unit
   }
-
-  import frameless.functions.aggregate._
-
-  type UserId   = Int
-  type ArtistId = Int
-  type Count    = Int
-  type Prediction = Double
 
   def areaUnderCurve(
       userArtistData:  TypedDataset[UserArtistData],

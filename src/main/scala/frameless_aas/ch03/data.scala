@@ -1,6 +1,11 @@
 package frameless_aas.ch03
 
-import cats.syntax.option._
+import cats.effect.Sync
+import cats.syntax.functor._
+import frameless.TypedDataset
+import org.apache.spark.sql.{Dataset, Encoder}
+import frameless.cats.implicits._
+import frameless.syntax.DatasetSyntax
 
 import scala.util.Try
 
@@ -24,6 +29,11 @@ object ArtistAlias {
     case ("", _)     => None
     case (bad, good) => (bad != good).toOption(ArtistAlias(bad.toInt, good.trim.toInt))
   }
+  def canonicalMap[F[_]: Sync](d: TypedDataset[ArtistAlias]): F[Map[Int, Int]] =
+    d.collect[F].map { s: Seq[ArtistAlias] =>
+      val m = s.filterNot(x => x.goodId == x.badId).map(a => a.badId -> a.goodId).toMap
+      m.map { case (k, v) => k -> m.getOrElse(v, v) }
+    }
 }
 
 case class UserArtist(userId: Int, artistId: Int)

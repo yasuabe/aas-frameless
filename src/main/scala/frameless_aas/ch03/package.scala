@@ -10,6 +10,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import frameless.syntax._
 import frameless.{TypedDataset, TypedEncoder}
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.ml.recommendation.{ALS, ALSModel}
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions.lit
@@ -23,6 +24,8 @@ package object ch03 {
   type Prediction = Double
 
   type Action[T] = ReaderT[IO, SparkSession, T]
+
+  val UserID = 2093760
 
   implicit class BoolToOption(val self: Boolean) extends AnyVal {
     def toOption[A](value: => A): Option[A] =
@@ -74,19 +77,15 @@ package object ch03 {
     } yield ()
   }
   // TODO: まず Alias 自体を正規化しておくべき. unknown artist も除外すべき.
-  def canonicalize(
+  def canonicalize[F[_]: Sync](
     playData: TypedDataset[UserArtistData],
-    aliases:  TypedDataset[ArtistAlias]
+    bAliases: Broadcast[Map[Int, Int]]
   ): TypedDataset[UserArtistData] = {
-    val joined = playData.joinLeft(aliases)(playData('artistId) === aliases('badId))
-    val extractGoodId = joined.makeUDF((_: Option[ArtistAlias]).map(_.goodId))
-    joined.select (
-      joined.colMany('_1, 'userId),
-      extractGoodId(joined('_2)).getOrElse(joined.colMany('_1, 'artistId)),
-      joined.colMany('_1, 'playCount)
-    ).as[UserArtistData]
-  }
-  def conv[T, U: TypedEncoder](f: DataFrame => DataFrame): TypedDataset[T] => TypedDataset[U] =
+      val e = playData.makeUDF((n: Int) => bAliases.value.getOrElse(n, n))
+      playData.withColumnReplaced('artistId, e(playData('artistId)))
+    }
+
+  def liftTyped[T, U: TypedEncoder](f: DataFrame => DataFrame): TypedDataset[T] => TypedDataset[U] =
     in => f(in.toDF).unsafeTyped[U]
 
   def buildALSModel(rank: Int, regParam: Double, alpha: Double, ds: TypedDataset[_]): ALSModel =

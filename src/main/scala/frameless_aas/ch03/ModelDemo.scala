@@ -10,6 +10,7 @@ import org.apache.spark.ml.recommendation.{ALS, ALSModel}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions._
 import frameless_aas._
+import frameless_aas.broadcast
 import scala.util.Random
 
 trait ModelDemo[F[_]] {
@@ -25,7 +26,8 @@ trait ModelDemo[F[_]] {
     aliases: TypedDataset[ArtistAlias]
   ): F[Unit] = for {
     _           <- print(s"artists $SampleUserID has played")
-    trainData   =  canonicalize(userArtists, aliases)
+    bAliases    <- ArtistAlias.canonicalMap(aliases) >>= broadcast[F, Map[Int, Int]]
+    trainData   =  canonicalize(userArtists, bAliases)
     model       <- buildALSModel(trainData)
     playedByHim <- selectArtists(trainData, SampleUserID).collect[F]
     _           <- artists.filter(artists('id).isin(playedByHim:_*)).show()
