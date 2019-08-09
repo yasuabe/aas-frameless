@@ -8,11 +8,12 @@ import cats.syntax.functor._
 import cats.syntax.traverse._
 import frameless.TypedDataset
 import frameless.cats.implicits._
+import frameless.functions.aggregate._
 import frameless_aas._
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.ml.recommendation.ALSModel
 import org.apache.spark.sql.SparkSession
-import frameless.functions.aggregate._
+import org.apache.spark.sql.types.DoubleType
 
 trait EvaluateDemo[F[_]] {
   implicit val F: ApplicativeAsk[F, SparkSession]
@@ -37,17 +38,29 @@ trait EvaluateDemo[F[_]] {
       mostListenedAUC  <- areaUnderCurve(cv, bAllArtistIDs, predictMostListened(train))
       _                <- print(mostListenedAUC)
 
-      f         =  (m: ALSModel) => areaUnderCurve(cv, bAllArtistIDs, liftTyped(m.transform))
-      evaluated <- tryCombinations(train)(f).sequence
+      evaluated <- tryCombinations(train)(aucFunc(cv, bAllArtistIDs)).sequence
       _         <- evaluated.sorted.reverse.map(print).sequence
       _         <- unpersist(train) >> unpersist(cv)
     } yield ()
   }
+  def aucFunc(cv: TypedDataset[UserArtistData], bArtistIds: Broadcast[Seq[Int]])(m: ALSModel): F[Double] =
+    F.ask.flatMap { spark =>
+      import spark.implicits._
+      def predictFunction(in: TypedDataset[UserArtist]) = {
+        val df     = m.transform(in.toDF)
+        val result = df.withColumn("prediction", df.col("prediction").cast(DoubleType)).as[UserArtistPrediction]
+        TypedDataset.create(result)
+      }
+      areaUnderCurve(cv, bArtistIds, predictFunction)
+    }
   def tryCombinations(ds: TypedDataset[UserArtistData])(aucFunc: ALSModel => F[Double])
   : List[F[(Double, (Int, Double, Double))]] = for {
-      rank     <- List(5, 30)
-      regParam <- List(1.0, 0.0001)
-      alpha    <- List(1.0, 40.0)
+//    rank     <- List(5, 30)
+//    regParam <- List(1.0, 0.0001)
+//    alpha    <- List(1.0, 40.0)
+      rank     <- List(30)
+      regParam <- List(1.0)
+      alpha    <- List(40.0)
   } yield useALSModel(rank, regParam, alpha, ds, aucFunc)
 
   def useALSModel[O](rank: Int, regParam: Double, alpha: Double, train: TypedDataset[_], aucFunc: ALSModel => F[O])
@@ -56,7 +69,6 @@ trait EvaluateDemo[F[_]] {
   } (aucFunc(_).map((_, (rank, regParam, alpha)))) { model =>
     unpersistF(model.userFactors) >> unpersistF(model.itemFactors) >> S.unit
   }
-
   def areaUnderCurve(
       userArtistData:  TypedDataset[UserArtistData],
       bAllArtistIDs:   Broadcast[Seq[Int]],
@@ -65,7 +77,7 @@ trait EvaluateDemo[F[_]] {
     import spark.implicits._
 
     def join(p: TypedDataset[UserArtistPrediction], n: TypedDataset[UserArtistPrediction])
-    : TypedDataset[(UserId, Prediction, Prediction)] = {
+    : TypedDataset[(UserId, Option[Prediction], Option[Prediction])] = {
       val j = p.joinInner(n)( p('userId) === n('userId) )
       j.select(
         j.colMany('_1, 'userId),
@@ -73,13 +85,13 @@ trait EvaluateDemo[F[_]] {
         j.colMany('_2, 'prediction)
       )
     }
-    def allCounts(j: TypedDataset[(UserId, Prediction, Prediction)]): TypedDataset[(UserId, Int)] =
+    def allCounts(j: TypedDataset[(UserId, Option[Prediction], Option[Prediction])]): TypedDataset[(UserId, Int)] =
       j.groupBy(j('_1)).agg(count(j('_1)).cast[Int])
 
-    def correctCounts(b: TypedDataset[(UserId, Prediction, Prediction)]): TypedDataset[(UserId, Int)] = b
-      .filter(b('_2) > b('_3))
-      .groupBy(b('_1))
-      .agg(count(b('_1)).cast[Int])
+    def correctCounts(b: TypedDataset[(UserId, Option[Prediction], Option[Prediction])]): TypedDataset[(UserId, Int)] = b
+        .filter(b('_2) > b('_3))
+        .groupBy(b('_1))
+        .agg(count(b('_1)).cast[Int])
 
     def meanAuc(all: TypedDataset[(UserId, Count)], correct: TypedDataset[(UserId, Count)]): F[Double] = {
       val j = all.joinLeft(correct)(all('_1) === correct('_1))
@@ -105,10 +117,12 @@ trait EvaluateDemo[F[_]] {
     train: TypedDataset[UserArtistData])(
     all:   TypedDataset[UserArtist])
   : TypedDataset[UserArtistPrediction] = {
-    val s = train.groupBy(train('artistId)).agg(sum(train('playCount)).cast[Double])
-    val j = all.joinLeft(s)(all('artistId) === s('_1))
+    val s = train.groupBy(train('artistId))
+                 .agg(sum(train('playCount)).cast[Double])
+                 .as[ArtistPrediction]
+    val j = all.joinLeft(s)(all('artistId) === s('artistId))
 
-    val countSum = j.makeUDF((_: Option[(Int, Double)]).map(_._2).getOrElse(0.0))
+    val countSum = j.makeUDF((_: Option[ArtistPrediction]).map(_.prediction))
     j.select(
       j.colMany('_1, 'userId),
       j.colMany('_1, 'artistId),

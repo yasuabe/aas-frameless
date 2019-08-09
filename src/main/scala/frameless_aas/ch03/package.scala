@@ -12,8 +12,9 @@ import frameless.syntax._
 import frameless.{TypedDataset, TypedEncoder}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.ml.recommendation.{ALS, ALSModel}
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.{DataFrame, Encoder, SparkSession}
 import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.types.DoubleType
 
 import scala.reflect.runtime.universe.TypeTag
 
@@ -84,9 +85,6 @@ package object ch03 {
       val e = playData.makeUDF((n: Int) => bAliases.value.getOrElse(n, n))
       playData.withColumnReplaced('artistId, e(playData('artistId)))
     }
-
-  def liftTyped[T, U: TypedEncoder](f: DataFrame => DataFrame): TypedDataset[T] => TypedDataset[U] =
-    in => f(in.toDF).unsafeTyped[U]
 
   def buildALSModel(rank: Int, regParam: Double, alpha: Double, ds: TypedDataset[_]): ALSModel =
     new ALS()

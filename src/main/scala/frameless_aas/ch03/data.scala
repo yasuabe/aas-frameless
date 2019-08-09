@@ -3,9 +3,7 @@ package frameless_aas.ch03
 import cats.effect.Sync
 import cats.syntax.functor._
 import frameless.TypedDataset
-import org.apache.spark.sql.{Dataset, Encoder}
 import frameless.cats.implicits._
-import frameless.syntax.DatasetSyntax
 
 import scala.util.Try
 
@@ -35,8 +33,7 @@ object ArtistAlias {
       m.map { case (k, v) => k -> m.getOrElse(v, v) }
     }
 }
-
 case class UserArtist(userId: Int, artistId: Int)
 case class ArtistPrediction(artistId: Int, prediction: Double)
 case class ArtistPrediction2(artistId: Int, prediction: Int)
-case class UserArtistPrediction(userId: Int, artistId: Int, prediction: Double)
+case class UserArtistPrediction(userId: Int, artistId: Int, prediction: Option[Double])

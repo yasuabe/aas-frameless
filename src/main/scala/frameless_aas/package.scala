@@ -1,6 +1,7 @@
 import cats.effect.Sync
+import cats.syntax.option._
 import cats.mtl.ApplicativeAsk
-import frameless.{TypedDataset, TypedEncoder}
+import frameless.{Injection, TypedDataset, TypedEncoder}
 import frameless.syntax._
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{Dataset, Encoder, SparkSession}
@@ -66,4 +67,9 @@ package object frameless_aas {
   }
   def broadcast[F[_]: Sync, T: ClassTag](value: T)(implicit F: ApplicativeAsk[F, SparkSession]): F[Broadcast[T]] =
     F.ask.map(_.sparkContext.broadcast(value))
+
+  implicit val i: Injection[Option[Double], Double] = new Injection[Option[Double], Double] {
+    def apply(a: Option[Double]): Double = a.getOrElse(Double.NaN)
+    def invert(b: Double): Option[Double] = b.some
+  }
 }
