@@ -30,7 +30,7 @@ object ArtistAlias {
   def canonicalMap[F[_]: Sync](d: TypedDataset[ArtistAlias]): F[Map[Int, Int]] =
     d.collect[F].map { s: Seq[ArtistAlias] =>
       val m = s.filterNot(x => x.goodId == x.badId).map(a => a.badId -> a.goodId).toMap
-      m.map { case (k, v) => k -> m.getOrElse(v, v) }
+      m map { case (k, v) => k -> m.getOrElse(v, v) }
     }
 }
 case class UserArtist(userId: Int, artistId: Int)

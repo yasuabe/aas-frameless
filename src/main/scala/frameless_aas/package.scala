@@ -7,6 +7,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{Dataset, Encoder, SparkSession}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import frameless_aas.ch03.SparkAsk
 import org.apache.spark.broadcast.Broadcast
 
 import scala.collection.mutable.ArrayBuffer
@@ -39,6 +40,7 @@ package object frameless_aas {
 
   def cache[F[_]: Sync, T](t: TypedDataset[T]): F[TypedDataset[T]] = Sync[F].delay(t.cache())
   def unpersist[F[_]: Sync, T](t: TypedDataset[T]): F[TypedDataset[T]] = Sync[F].delay(t.unpersist())
+  def unpersist_[F[_], T](t: TypedDataset[T])(implicit S: Sync[F]): F[Unit] = unpersist(t) >> S.unit
   def unpersistF[F[_]: Sync, T](ds: Dataset[T]): F[Dataset[T]] = Sync[F].delay(ds.unpersist())
 
   def groupAndFlatMap[I, K: Encoder, O: Encoder: TypedEncoder](
@@ -58,14 +60,17 @@ package object frameless_aas {
     }
     result
   }
-  def cacheUnpersist[F[_], T, O](a: TypedDataset[T])(f: TypedDataset[T] => F[O])(implicit S: Sync[F]): F[O] =
-    S.bracket(cache(a))(f)(x => unpersist(x) >> S.unit) // TODO
+  def useCache[F[_], T, R](t: TypedDataset[T])(f: TypedDataset[T] => R)(implicit S: Sync[F]): F[R] =
+    S.bracket(cache(t))(t => S.delay(f(t)))(unpersist_(_))
+
+  def useCacheM[F[_], T, O](a: TypedDataset[T])(f: TypedDataset[T] => F[O])(implicit S: Sync[F]): F[O] =
+    S.bracket(cache(a))(f)(unpersist_(_))
 
   implicit class BooleanOps(val b: Boolean) extends AnyVal {
     def toOption[T](v: => T): Option[T] =
       if (b) Some(v) else None
   }
-  def broadcast[F[_]: Sync, T: ClassTag](value: T)(implicit F: ApplicativeAsk[F, SparkSession]): F[Broadcast[T]] =
+  def broadcast[F[_]: Sync, T: ClassTag](value: T)(implicit F: SparkAsk[F]): F[Broadcast[T]] =
     F.ask.map(_.sparkContext.broadcast(value))
 
   implicit val i: Injection[Option[Double], Double] = new Injection[Option[Double], Double] {

@@ -12,11 +12,10 @@ import frameless.functions.aggregate._
 import frameless_aas._
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.ml.recommendation.ALSModel
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types.DoubleType
 
 trait EvaluateDemo[F[_]] {
-  implicit val F: ApplicativeAsk[F, SparkSession]
+  implicit val F: SparkAsk[F]
   implicit val S: Sync[F]
   import S._
 
@@ -109,7 +108,7 @@ trait EvaluateDemo[F[_]] {
     val negativePredictions = predictFunction(negativeData)
     val bothPredictions     = join(positivePredictions, negativePredictions).cache()
 
-    cacheUnpersist(bothPredictions) { b =>
+    useCacheM(bothPredictions) { b =>
       meanAuc(allCounts(b), correctCounts(b))
     }
   }
@@ -133,7 +132,7 @@ trait EvaluateDemo[F[_]] {
 object EvaluateModelDemoMain extends Ch03Base with IOApp with UsesSparkSession[IO] {
   val S: Sync[IO] = implicitly[Sync[IO]]
   private val instance = new EvaluateDemo[Action] {
-    val F: ApplicativeAsk[Action, SparkSession] = implicitly[ApplicativeAsk[Action, SparkSession]]
+    val F: SparkAsk[Action] = implicitly[SparkAsk[Action]]
     val S: Sync[Action] = implicitly[Sync[Action]]
   }
   def run(args: List[String]): IO[ExitCode] =

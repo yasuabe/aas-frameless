@@ -12,9 +12,8 @@ import frameless.syntax._
 import frameless.{TypedDataset, TypedEncoder}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.ml.recommendation.{ALS, ALSModel}
-import org.apache.spark.sql.{DataFrame, Encoder, SparkSession}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions.lit
-import org.apache.spark.sql.types.DoubleType
 
 import scala.reflect.runtime.universe.TypeTag
 
@@ -24,7 +23,8 @@ package object ch03 {
   type Count    = Int
   type Prediction = Double
 
-  type Action[T] = ReaderT[IO, SparkSession, T]
+  type Action[T]      = ReaderT[IO, SparkSession, T]
+  type SparkAsk[F[_]] = ApplicativeAsk[F, SparkSession]
 
   val UserID = 2093760
 
@@ -32,21 +32,11 @@ package object ch03 {
     def toOption[A](value: => A): Option[A] =
       if (self) Some(value) else None
   }
-  implicit val readerIOApplicativeAsk: ApplicativeAsk[Action, SparkSession] =
+  implicit val readerIOApplicativeAsk: SparkAsk[Action] =
     askReader[IO, SparkSession]
 
-  // TODO: いまいち
-  def resource[F[_], T, R](ds: TypedDataset[T])(f: TypedDataset[T] => R)(implicit S: Sync[F]): F[R] = {
-    S.bracket(
-      S.delay(ds.cache())
-    )(
-      ds => S.delay(f(ds))
-    )(
-      ds => S.delay(ds.unpersist()).as(())
-    )
-  }
   def readLines[F[_]: Applicative, T <: Product: TypeTag: TypedEncoder](
-    fileName: String, f: String => T)(implicit F: ApplicativeAsk[F, SparkSession]
+    fileName: String, f: String => T)(implicit F: SparkAsk[F]
   ): F[TypedDataset[T]] = {
     def read(spark: SparkSession) = {
       import spark.implicits._
@@ -58,7 +48,7 @@ package object ch03 {
   def flatReadLines[F[_]: Applicative, T <: Product: TypeTag](
     fileName: String,
     f: String => TraversableOnce[T]
-  )(implicit F: ApplicativeAsk[F, SparkSession], te: TypedEncoder[T]
+  )(implicit F: SparkAsk[F], te: TypedEncoder[T]
   ): F[TypedDataset[T]] = {
     def read(spark: SparkSession) = {
       import spark.implicits.newProductEncoder
@@ -66,18 +56,19 @@ package object ch03 {
     }
     F.ask.map(spark => read(spark).typed)
   }
-  // TODO: 独立したファイルに
   trait Ch03Base {
-    type Func[F[_]] = (TypedDataset[UserArtistData], TypedDataset[ArtistData], TypedDataset[ArtistAlias]) => F[Unit]
     val path = "files/profiledata_06-May-2005"
-    def program[F[_]: Applicative](f: Func[F])(implicit F: ApplicativeAsk[F, SparkSession], S: Sync[F]): F[Unit] = for {
+
+    def program[F[_]: Applicative](
+      f: (TypedDataset[UserArtistData], TypedDataset[ArtistData], TypedDataset[ArtistAlias]) => F[Unit])(
+      implicit F: SparkAsk[F], S: Sync[F])
+    : F[Unit] = for {
       playData <- readLines(s"$path/user_artist_data.txt", UserArtistData(_))
       artists  <- flatReadLines(s"$path/artist_data.txt", ArtistData(_))
       aliases  <- flatReadLines(s"$path/artist_alias.txt", ArtistAlias(_))
       _        <- f(playData, artists, aliases)
     } yield ()
   }
-  // TODO: まず Alias 自体を正規化しておくべき. unknown artist も除外すべき.
   def canonicalize[F[_]: Sync](
     playData: TypedDataset[UserArtistData],
     bAliases: Broadcast[Map[Int, Int]]
@@ -85,7 +76,6 @@ package object ch03 {
       val e = playData.makeUDF((n: Int) => bAliases.value.getOrElse(n, n))
       playData.withColumnReplaced('artistId, e(playData('artistId)))
     }
-
   def buildALSModel(rank: Int, regParam: Double, alpha: Double, ds: TypedDataset[_]): ALSModel =
     new ALS()
       .setSeed(Random.nextLong())
@@ -100,15 +90,15 @@ package object ch03 {
       .setPredictionCol("prediction")
       .fit(ds.dataset)
 
-  def recommend[F[_]: Sync](
+  def makeRecommendation[F[_]: Sync](
     model: ALSModel, userID: Int, howMany: Int)(
-    implicit F: ApplicativeAsk[F, SparkSession])
+    implicit F: SparkAsk[F])
   : F[TypedDataset[ArtistPrediction]] =
     F.ask map { spark: SparkSession =>
       import spark.implicits._
-      val toRecommend = model.itemFactors.
-        select($"id".as("artistId")).
-        withColumn("userId", lit(userID))
+      val toRecommend = model.itemFactors
+        .select($"id".as("artistId"))
+        .withColumn("userId", lit(userID))
       model.transform(toRecommend)
         .select("artistId", "prediction")
         .orderBy($"prediction".desc)
