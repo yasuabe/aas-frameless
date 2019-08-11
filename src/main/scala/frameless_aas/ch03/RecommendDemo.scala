@@ -11,7 +11,7 @@ trait RecommendDemo[F[_]] {
   implicit val F: SparkAsk[F]
   implicit val S: Sync[F]
 
-  def recommend( // TODO rename
+  def recommend(
     userArtists: TypedDataset[UserArtistData],
     artistData:  TypedDataset[ArtistData],
     aliases:     TypedDataset[ArtistAlias]

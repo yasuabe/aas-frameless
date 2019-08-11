@@ -35,5 +35,4 @@ object ArtistAlias {
 }
 case class UserArtist(userId: Int, artistId: Int)
 case class ArtistPrediction(artistId: Int, prediction: Double)
-case class ArtistPrediction2(artistId: Int, prediction: Int)
 case class UserArtistPrediction(userId: Int, artistId: Int, prediction: Option[Double])

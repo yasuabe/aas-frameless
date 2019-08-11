@@ -54,12 +54,9 @@ trait EvaluateDemo[F[_]] {
     }
   def tryCombinations(ds: TypedDataset[UserArtistData])(aucFunc: ALSModel => F[Double])
   : List[F[(Double, (Int, Double, Double))]] = for {
-//    rank     <- List(5, 30)
-//    regParam <- List(1.0, 0.0001)
-//    alpha    <- List(1.0, 40.0)
-      rank     <- List(30)
-      regParam <- List(1.0)
-      alpha    <- List(40.0)
+    rank     <- List(5, 30)
+    regParam <- List(1.0, 0.0001)
+    alpha    <- List(1.0, 40.0)
   } yield useALSModel(rank, regParam, alpha, ds, aucFunc)
 
   def useALSModel[O](rank: Int, regParam: Double, alpha: Double, train: TypedDataset[_], aucFunc: ALSModel => F[O])
