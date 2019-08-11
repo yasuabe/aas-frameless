@@ -1,20 +1,17 @@
 package frameless_aas.ch03
 
 import cats.effect.{ExitCode, IO, IOApp, Sync}
-import cats.mtl.ApplicativeAsk
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import frameless.TypedDataset
 import frameless.cats.implicits._
-import org.apache.spark.ml.recommendation.{ALS, ALSModel}
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.functions._
+import org.apache.spark.ml.recommendation.ALSModel
 import frameless_aas._
-import scala.util.Random
+import frameless_aas.broadcast
 
 trait ModelDemo[F[_]] {
   val SampleUserID = 2093760
-  implicit val F: ApplicativeAsk[F, SparkSession]
+  implicit val F: SparkAsk[F]
   implicit val S: Sync[F]
 
   private def print(s: Any) = S.delay(println(s))
@@ -25,13 +22,14 @@ trait ModelDemo[F[_]] {
     aliases: TypedDataset[ArtistAlias]
   ): F[Unit] = for {
     _           <- print(s"artists $SampleUserID has played")
-    trainData   =  canonicalize(userArtists, aliases)
-    model       <- buildALSModel(trainData)
+    bAliases    <- ArtistAlias.canonicalMap(aliases) >>= broadcast[F, Map[Int, Int]]
+    trainData   =  canonicalize(userArtists, bAliases)
+    model       <- trainALSModel(trainData)
     playedByHim <- selectArtists(trainData, SampleUserID).collect[F]
     _           <- artists.filter(artists('id).isin(playedByHim:_*)).show()
 
     _           <- print(s"recommendations for $SampleUserID")
-    recommended <- recommend(model, SampleUserID, 5)
+    recommended <- makeRecommendation(model, SampleUserID, 5)
     _           <- recommended.show()
 
     _         <- print(s"recommendations for $SampleUserID")
@@ -48,51 +46,13 @@ trait ModelDemo[F[_]] {
     .select(trainData('artistId))
     .as[Int]
 
-  def buildALSModel(trainData: TypedDataset[UserArtistData]): F[ALSModel] = resource(trainData) { ds =>
-    new ALS()
-      .setSeed(Random.nextLong())
-      .setImplicitPrefs(true)
-      .setRank(10)
-      .setRegParam(0.01)
-      .setAlpha(1.0)
-      .setMaxIter(5)
-      .setUserCol("userId")
-      .setItemCol("artistId")
-      .setRatingCol("playCount")
-      .setPredictionCol("prediction")
-      .fit(ds.dataset)
-  }
-  def canonicalize(
-    playData: TypedDataset[UserArtistData],
-    aliases:  TypedDataset[ArtistAlias]
-  ): TypedDataset[UserArtistData] = {
-    val joined = playData.joinLeft(aliases)(playData('artistId) === aliases('badId))
-    val extractGoodId = joined.makeUDF((_: Option[ArtistAlias]).map(_.goodId))
-    joined.select (
-      joined.colMany('_1, 'userId),
-      extractGoodId(joined('_2)).getOrElse(joined.colMany('_1, 'artistId)),
-      joined.colMany('_1, 'playCount)
-    ).as[UserArtistData]
-  }
-  def recommend(model: ALSModel, userID: Int, howMany: Int): F[TypedDataset[ArtistPrediction]] = {
-    F.ask map { spark =>
-      import spark.implicits._
-      val toRecommend = model.itemFactors.
-        select($"id".as("artistId")).
-        withColumn("userId", lit(userID))
-      model.transform(toRecommend)
-        .select("artistId", "prediction")
-        .orderBy($"prediction".desc)
-        .limit(howMany)
-        .as[ArtistPrediction]
-        .typed
-    }
-  }
+  def trainALSModel(trainData: TypedDataset[UserArtistData]): F[ALSModel] =
+    useCache(trainData)(buildALSModel(10, 0.01, 1.0, _))
 }
 object ModelDemoMain extends Ch03Base with IOApp with UsesSparkSession[IO] {
   val S: Sync[IO] = implicitly[Sync[IO]]
   private val instance = new ModelDemo[Action] {
-    val F: ApplicativeAsk[Action, SparkSession] = implicitly[ApplicativeAsk[Action, SparkSession]]
+    val F: SparkAsk[Action] = implicitly[SparkAsk[Action]]
     val S: Sync[Action] = implicitly[Sync[Action]]
   }
   def run(args: List[String]): IO[ExitCode] =
